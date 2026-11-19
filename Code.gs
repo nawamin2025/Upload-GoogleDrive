@@ -1,53 +1,42 @@
-/**
- * Google Apps Script สำหรับอัปโหลดไฟล์เข้า Google Drive แบบไม่จำกัดขนาดไฟล์ (Resumable Upload)
- * รองรับไฟล์ขนาดใหญ่ระดับ GB / TB (สูงสุดตามพื้นที่ว่างใน Google Drive ของคุณ)
- * 
- * วิธีตั้งค่า:
- * 1. เปลี่ยนค่า FOLDER_ID ด้านล่างให้เป็นรหัสโฟลเดอร์ Google Drive ของคุณ
- * 2. กด Deploy > New deployment > เลือกประเภทเป็น Web app
- * 3. ตั้งค่า:
- *    - Execute as: Me (บัญชีของคุณ)
- *    - Who has access: Anyone (ทุกคน)
- * 4. กด Deploy และคัดลอก Web App URL ไปใส่ในหน้าเว็บ
- */
-
-const FOLDER_ID = '1KbcClXSo3h019E5vXrSKx8f2dWqpQQ1m'; // โฟลเดอร์เป้าหมายของคุณ
+const FOLDER_ID = '1KbcClXSo3h019E5vXrSKx8f2dWqpQQ1m';
+const TELEGRAM_BOT_TOKEN = '9146466574:AAEN9NrsWVyfb9fw52jpckzqBTpnMdmQTX4';
+const ALLOWED_CHAT_IDS = []; // หากต้องการล็อกให้ใช้ได้เฉพาะคุณ ให้ใส่ Chat ID ในวงเล็บ เช่น [123456789]
 
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
-      return createJsonResponse({ status: 'error', message: 'ไม่พบข้อมูลที่ส่งมา (No payload)' });
+      return createJsonResponse({ status: 'error', message: 'No payload' });
     }
 
     const data = JSON.parse(e.postData.contents);
+
+    // 1. รับไฟล์และคำสั่งจาก Telegram Bot (@Upload_Drive2_bot)
+    if (data.update_id || data.message || data.edited_message) {
+      handleTelegramUpdate(data);
+      return createJsonResponse({ status: 'ok' });
+    }
+
+    // 2. รับไฟล์จากหน้าเว็บ HTML/JS
     const action = data.action || 'base64Upload';
-    const targetFolder = getTargetFolder(data.folderId || FOLDER_ID);
+    const targetFolder = DriveApp.getFolderById((data.folderId || FOLDER_ID).trim());
 
-    // โหมดที่ 1: ขอ Resumable Upload URL สำหรับอัปโหลดไฟล์ตรงเข้า Google Drive โดยไม่จำกัดขนาดไฟล์
     if (action === 'initResumable') {
-      const { fileName, mimeType, fileSize, origin } = data;
-      if (!fileName) {
-        return createJsonResponse({ status: 'error', message: 'ไม่ระบุชื่อไฟล์ (Missing fileName)' });
-      }
-
       const initUrl = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable';
       const metadata = {
-        name: fileName,
-        mimeType: mimeType || 'application/octet-stream',
+        name: data.fileName,
+        mimeType: data.mimeType || 'application/octet-stream',
         parents: [targetFolder.getId()]
       };
 
       const headers = {
         'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(),
-        'X-Upload-Content-Type': mimeType || 'application/octet-stream'
+        'X-Upload-Content-Type': data.mimeType || 'application/octet-stream'
       };
-
-      if (typeof fileSize === 'number' && fileSize >= 0) {
-        headers['X-Upload-Content-Length'] = String(fileSize);
+      if (typeof data.fileSize === 'number' && data.fileSize >= 0) {
+        headers['X-Upload-Content-Length'] = String(data.fileSize);
       }
-
-      if (origin && origin !== 'null') {
-        headers['Origin'] = origin;
+      if (data.origin && data.origin !== 'null') {
+        headers['Origin'] = data.origin;
       }
 
       const response = UrlFetchApp.fetch(initUrl, {
@@ -58,74 +47,153 @@ function doPost(e) {
         muteHttpExceptions: true
       });
 
-      const code = response.getResponseCode();
-      if (code !== 200) {
-        return createJsonResponse({
-          status: 'error',
-          message: 'ไม่สามารถสร้างเซสชันอัปโหลดได้ (HTTP ' + code + '): ' + response.getContentText()
-        });
+      if (response.getResponseCode() !== 200) {
+        return createJsonResponse({ status: 'error', message: response.getContentText() });
       }
 
       const allHeaders = response.getAllHeaders();
-      const uploadUrl = allHeaders['Location'] || allHeaders['location'];
-
       return createJsonResponse({
         status: 'success',
-        uploadUrl: uploadUrl,
-        folderName: targetFolder.getName()
+        uploadUrl: allHeaders['Location'] || allHeaders['location']
       });
     }
 
-    // โหมดที่ 2 (Fallback): อัปโหลดผ่าน Base64 กรณีเปิดไฟล์แบบออฟไลน์ (file://)
-    const { fileName, mimeType, base64Data } = data;
-    if (!fileName || !base64Data) {
-      return createJsonResponse({ status: 'error', message: 'ข้อมูลไฟล์ไม่ครบถ้วน' });
-    }
-
-    const decodedBytes = Utilities.base64Decode(base64Data);
-    const blob = Utilities.newBlob(decodedBytes, mimeType || 'application/octet-stream', fileName);
+    const decoded = Utilities.base64Decode(data.base64Data);
+    const blob = Utilities.newBlob(decoded, data.mimeType || 'application/octet-stream', data.fileName);
     const file = targetFolder.createFile(blob);
 
     return createJsonResponse({
       status: 'success',
-      message: 'อัปโหลดสำเร็จ',
       fileId: file.getId(),
       fileName: file.getName(),
-      fileUrl: file.getUrl(),
-      folderName: targetFolder.getName()
+      fileUrl: file.getUrl()
     });
-  } catch (error) {
-    return createJsonResponse({
-      status: 'error',
-      message: error.toString()
-    });
+  } catch (err) {
+    return createJsonResponse({ status: 'error', message: err.toString() });
   }
 }
 
-function doGet() {
-  // เรียก DriveApp เพื่อให้ Google Apps Script ขอสิทธิ์ Scope ของ Google Drive ครบถ้วนตอนกด Authorize
-  DriveApp.getStorageLimit();
-  return createJsonResponse({
-    status: 'ok',
-    message: 'Google Drive Unlimited Uploader API is running.'
+function handleTelegramUpdate(update) {
+  const msg = update.message;
+  if (!msg || !msg.chat) return;
+
+  const chatId = msg.chat.id;
+
+  if (ALLOWED_CHAT_IDS.length > 0 && ALLOWED_CHAT_IDS.indexOf(chatId) === -1) {
+    sendTelegramMessage(chatId, '⛔ บอทนี้จำกัดสิทธิ์เฉพาะเจ้าของเท่านั้น (Your Chat ID: ' + chatId + ')');
+    return;
+  }
+
+  if (msg.text && (msg.text.startsWith('/start') || msg.text.startsWith('/help'))) {
+    sendTelegramMessage(
+      chatId,
+      '📂 *Google Drive Uploader Bot (@Upload_Drive2_bot) พร้อมใช้งาน!*\n\n' +
+      '• ส่งไฟล์, รูปภาพ, วิดีโอ หรือไฟล์เสียง มาในแชทนี้เพื่ออัปโหลดเข้า Google Drive ได้ทันที (สูงสุด 20 MB ต่อไฟล์สำหรับบอท Telegram)\n' +
+      '• สำหรับไฟล์ขนาดใหญ่ไม่จำกัดขนาด อัปโหลดผ่านเว็บได้ที่:\nhttps://nawamin2025.github.io/Upload-GoogleDrive/\n\n' +
+      '🆔 Chat ID ของคุณคือ: `' + chatId + '`'
+    );
+    return;
+  }
+
+  let fileId = null;
+  let fileName = null;
+  let mimeType = null;
+
+  if (msg.document) {
+    fileId = msg.document.file_id;
+    fileName = msg.document.file_name || ('document_' + Date.now());
+    mimeType = msg.document.mime_type;
+  } else if (msg.photo && msg.photo.length > 0) {
+    const largestPhoto = msg.photo[msg.photo.length - 1];
+    fileId = largestPhoto.file_id;
+    fileName = 'photo_' + formatTimestamp() + '.jpg';
+    mimeType = 'image/jpeg';
+  } else if (msg.video) {
+    fileId = msg.video.file_id;
+    fileName = msg.video.file_name || ('video_' + formatTimestamp() + '.mp4');
+    mimeType = msg.video.mime_type || 'video/mp4';
+  } else if (msg.audio) {
+    fileId = msg.audio.file_id;
+    fileName = msg.audio.file_name || ('audio_' + formatTimestamp() + '.mp3');
+    mimeType = msg.audio.mime_type || 'audio/mpeg';
+  } else if (msg.voice) {
+    fileId = msg.voice.file_id;
+    fileName = 'voice_' + formatTimestamp() + '.ogg';
+    mimeType = msg.voice.mime_type || 'audio/ogg';
+  }
+
+  if (!fileId) {
+    sendTelegramMessage(chatId, '💡 ส่งไฟล์ รูปภาพ หรือวิดีโอที่ต้องการอัปโหลดเข้า Google Drive มาในแชทนี้ได้เลยครับ');
+    return;
+  }
+
+  try {
+    const getFileUrl = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/getFile?file_id=' + encodeURIComponent(fileId);
+    const fileInfoRes = UrlFetchApp.fetch(getFileUrl, { muteHttpExceptions: true });
+    const fileInfo = JSON.parse(fileInfoRes.getContentText());
+
+    if (!fileInfo.ok || !fileInfo.result || !fileInfo.result.file_path) {
+      sendTelegramMessage(
+        chatId,
+        '❌ ไม่สามารถดึงไฟล์จาก Telegram ได้ (ไฟล์อาจมีขนาดเกิน 20 MB ตามข้อจำกัดของ Telegram Bot)\n' +
+        '👉 สำหรับไฟล์ขนาดใหญ่ อัปโหลดผ่านหน้าเว็บได้ที่:\nhttps://nawamin2025.github.io/Upload-GoogleDrive/'
+      );
+      return;
+    }
+
+    const downloadUrl = 'https://api.telegram.org/file/bot' + TELEGRAM_BOT_TOKEN + '/' + fileInfo.result.file_path;
+    const fileBlob = UrlFetchApp.fetch(downloadUrl).getBlob();
+    fileBlob.setName(fileName);
+    if (mimeType) fileBlob.setContentType(mimeType);
+
+    const targetFolder = DriveApp.getFolderById(FOLDER_ID);
+    const savedFile = targetFolder.createFile(fileBlob);
+
+    sendTelegramMessage(
+      chatId,
+      '✅ *อัปโหลดเข้า Google Drive สำเร็จ!*\n' +
+      '📄 *ชื่อไฟล์:* `' + savedFile.getName() + '`\n' +
+      '🔗 [เปิดดูไฟล์ใน Google Drive](' + savedFile.getUrl() + ')'
+    );
+  } catch (err) {
+    sendTelegramMessage(chatId, '❌ เกิดข้อผิดพลาดในการอัปโหลด: ' + err.toString());
+  }
+}
+
+function sendTelegramMessage(chatId, text) {
+  const url = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/sendMessage';
+  UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true
+    }),
+    muteHttpExceptions: true
   });
 }
 
-function getTargetFolder(id) {
-  if (id && id !== 'PUT_YOUR_FOLDER_ID_HERE' && id.trim() !== '') {
-    try {
-      return DriveApp.getFolderById(id.trim());
-    } catch (err) {
-      throw new Error('ไม่พบโฟลเดอร์จาก Folder ID ที่ระบุ กรุณาตรวจสอบรหัสโฟลเดอร์อีกครั้ง');
-    }
-  }
+function setupTelegramWebhook() {
+  const webAppUrl = ScriptApp.getService().getUrl();
+  const apiUrl = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/setWebhook?url=' + encodeURIComponent(webAppUrl);
+  const res = UrlFetchApp.fetch(apiUrl, { muteHttpExceptions: true });
+  return JSON.parse(res.getContentText());
+}
 
-  const defaultFolderName = 'Web_Uploads';
-  const folders = DriveApp.getFoldersByName(defaultFolderName);
-  if (folders.hasNext()) {
-    return folders.next();
-  }
-  return DriveApp.createFolder(defaultFolderName);
+function formatTimestamp() {
+  return Utilities.formatDate(new Date(), 'GMT+7', 'yyyyMMdd_HHmmss');
+}
+
+function doGet() {
+  DriveApp.getStorageLimit();
+  const webhookResult = setupTelegramWebhook();
+  return createJsonResponse({
+    status: 'ok',
+    message: 'เชื่อมต่อ Telegram Bot (@Upload_Drive2_bot) และ Web Uploader เรียบร้อยแล้ว!',
+    webhook: webhookResult
+  });
 }
 
 function createJsonResponse(payload) {
