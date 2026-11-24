@@ -12,12 +12,42 @@ function doPost(e) {
 
     // 1. รับไฟล์และคำสั่งจาก Telegram Bot (@Upload_Drive2_bot)
     if (data.update_id || data.message || data.edited_message) {
+      if (isDuplicateTelegramUpdate(data.update_id)) {
+        return HtmlService.createHtmlOutput('OK');
+      }
       handleTelegramUpdate(data);
-      return createJsonResponse({ status: 'ok' });
+      return HtmlService.createHtmlOutput('OK');
     }
 
-    // 2. รับไฟล์จากหน้าเว็บ HTML/JS
+    // 2. จัดการประวัติชื่อไฟล์บน Cloud (เก็บเฉพาะชื่อไฟล์เท่านั้น ไม่เก็บลิงก์)
     const action = data.action || 'base64Upload';
+
+    if (action === 'getHistory') {
+      return createJsonResponse({
+        status: 'success',
+        history: getCloudHistoryNames()
+      });
+    }
+
+    if (action === 'logHistory') {
+      if (data.fileName) {
+        addCloudHistoryName(data.fileName);
+      }
+      return createJsonResponse({
+        status: 'success',
+        history: getCloudHistoryNames()
+      });
+    }
+
+    if (action === 'clearHistory') {
+      clearCloudHistoryNames();
+      return createJsonResponse({
+        status: 'success',
+        history: []
+      });
+    }
+
+    // 3. รับไฟล์จากหน้าเว็บ HTML/JS
     const targetFolder = DriveApp.getFolderById((data.folderId || FOLDER_ID).trim());
 
     if (action === 'initResumable') {
@@ -62,6 +92,9 @@ function doPost(e) {
     const blob = Utilities.newBlob(decoded, data.mimeType || 'application/octet-stream', data.fileName);
     const file = targetFolder.createFile(blob);
 
+    // บันทึกเฉพาะชื่อไฟล์ลง Cloud History
+    addCloudHistoryName(file.getName());
+
     return createJsonResponse({
       status: 'success',
       fileId: file.getId(),
@@ -70,6 +103,81 @@ function doPost(e) {
     });
   } catch (err) {
     return createJsonResponse({ status: 'error', message: err.toString() });
+  }
+}
+
+/**
+ * บันทึกเฉพาะชื่อไฟล์ลง Cloud PropertiesService (ไม่เก็บ URL หรือข้อมูลไฟล์)
+ */
+function addCloudHistoryName(fileName) {
+  if (!fileName) return;
+  const lock = LockService.getScriptLock();
+  lock.tryLock(5000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty('CLOUD_HISTORY_NAMES');
+    let list = [];
+    if (raw) {
+      try {
+        list = JSON.parse(raw);
+      } catch (_) {
+        list = [];
+      }
+    }
+    list.unshift({
+      name: String(fileName),
+      time: Utilities.formatDate(new Date(), 'GMT+7', 'dd/MM/yyyy HH:mm')
+    });
+    // เก็บสูงสุด 150 รายการล่าสุดบน Cloud
+    list = list.slice(0, 150);
+    props.setProperty('CLOUD_HISTORY_NAMES', JSON.stringify(list));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getCloudHistoryNames() {
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty('CLOUD_HISTORY_NAMES');
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return [];
+  }
+}
+
+function clearCloudHistoryNames() {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(5000);
+  try {
+    PropertiesService.getScriptProperties().deleteProperty('CLOUD_HISTORY_NAMES');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function isDuplicateTelegramUpdate(updateId) {
+  if (!updateId) return false;
+  const lock = LockService.getScriptLock();
+  lock.tryLock(5000);
+  try {
+    const cache = CacheService.getScriptCache();
+    const cacheKey = 'tg_uid_' + updateId;
+    if (cache.get(cacheKey)) {
+      return true;
+    }
+    cache.put(cacheKey, '1', 21600);
+
+    const props = PropertiesService.getScriptProperties();
+    const lastId = Number(props.getProperty('LAST_TG_UPDATE_ID') || 0);
+    if (updateId <= lastId) {
+      return true;
+    }
+    props.setProperty('LAST_TG_UPDATE_ID', String(updateId));
+    return false;
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -149,6 +257,9 @@ function handleTelegramUpdate(update) {
     const targetFolder = DriveApp.getFolderById(FOLDER_ID);
     const savedFile = targetFolder.createFile(fileBlob);
 
+    // บันทึกเฉพาะชื่อไฟล์ลง Cloud History ด้วย
+    addCloudHistoryName(savedFile.getName());
+
     sendTelegramMessage(
       chatId,
       '✅ *อัปโหลดเข้า Google Drive สำเร็จ!*\n' +
@@ -177,7 +288,7 @@ function sendTelegramMessage(chatId, text) {
 
 function setupTelegramWebhook() {
   const webAppUrl = ScriptApp.getService().getUrl();
-  const apiUrl = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/setWebhook?url=' + encodeURIComponent(webAppUrl);
+  const apiUrl = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/setWebhook?drop_pending_updates=true&url=' + encodeURIComponent(webAppUrl);
   const res = UrlFetchApp.fetch(apiUrl, { muteHttpExceptions: true });
   return JSON.parse(res.getContentText());
 }
@@ -186,7 +297,13 @@ function formatTimestamp() {
   return Utilities.formatDate(new Date(), 'GMT+7', 'yyyyMMdd_HHmmss');
 }
 
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter && e.parameter.action === 'getHistory') {
+    return createJsonResponse({
+      status: 'success',
+      history: getCloudHistoryNames()
+    });
+  }
   DriveApp.getStorageLimit();
   const webhookResult = setupTelegramWebhook();
   return createJsonResponse({
