@@ -302,6 +302,9 @@ document.querySelectorAll('.seg-btn').forEach((btn) => {
     const targetId = btn.getAttribute('data-tab');
     document.getElementById('uploadTab').classList.toggle('hidden', targetId !== 'uploadTab');
     document.getElementById('historyTab').classList.toggle('hidden', targetId !== 'historyTab');
+    if (targetId === 'historyTab') {
+      fetchCloudHistory(true);
+    }
   });
 });
 
@@ -702,24 +705,86 @@ function updateOverallProgress(doneFiles, totalFiles, currentFilePct = 0) {
 }
 
 // ============================================================================
-// 7. Upload History Tab
+// 7. Upload History Tab (Cloud Sync — เก็บเฉพาะชื่อไฟล์บน Cloud ไม่สูญหาย)
 // ============================================================================
-function addHistoryRecord(item) {
-  uploadHistory.unshift({
-    name: item.file.name,
-    size: item.file.size,
-    url: item.fileUrl || `https://drive.google.com/drive/u/4/folders/${CONFIG.folderId}`,
-    time: new Date().toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
-  });
-  uploadHistory = uploadHistory.slice(0, 30);
+const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
+const emptyHistoryText = document.getElementById('emptyHistoryText');
+
+async function fetchCloudHistory(silent = false) {
+  if (!silent && emptyHistoryText) {
+    emptyHistoryText.textContent = '☁️ กำลังดึงรายชื่อไฟล์จาก Cloud...';
+  }
+  try {
+    const res = await fetch(CONFIG.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'getHistory' })
+    });
+    const data = await res.json();
+    if (data.status === 'success' && Array.isArray(data.history)) {
+      // เก็บเฉพาะชื่อไฟล์และเวลาเท่านั้น
+      uploadHistory = data.history.map((h) => ({
+        name: String(h.name || ''),
+        time: String(h.time || '')
+      }));
+      localStorage.setItem('drivedrop_history', JSON.stringify(uploadHistory));
+      renderHistory();
+      if (!silent) showToast('☁️ ซิงค์ประวัติชื่อไฟล์จาก Cloud แล้ว');
+    }
+  } catch (_) {
+    if (emptyHistoryText && uploadHistory.length === 0) {
+      emptyHistoryText.textContent = 'ยังไม่มีประวัติชื่อไฟล์บน Cloud';
+    }
+  }
+}
+
+async function addHistoryRecord(item) {
+  const onlyNameRecord = {
+    name: String(item.file.name),
+    time: new Date().toLocaleString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    })
+  };
+
+  // อัปเดตหน้าเว็บทันที (เฉพาะชื่อไฟล์เท่านั้น)
+  uploadHistory.unshift(onlyNameRecord);
+  uploadHistory = uploadHistory.slice(0, 150);
   localStorage.setItem('drivedrop_history', JSON.stringify(uploadHistory));
   renderHistory();
+
+  // บันทึกเฉพาะชื่อไฟล์ขึ้น Cloud
+  try {
+    const res = await fetch(CONFIG.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'logHistory',
+        fileName: item.file.name
+      })
+    });
+    const data = await res.json();
+    if (data.status === 'success' && Array.isArray(data.history)) {
+      uploadHistory = data.history.map((h) => ({
+        name: String(h.name || ''),
+        time: String(h.time || '')
+      }));
+      localStorage.setItem('drivedrop_history', JSON.stringify(uploadHistory));
+      renderHistory();
+    }
+  } catch (_) {}
 }
 
 function renderHistory() {
   historyBadge.textContent = uploadHistory.length;
   historyBadge.classList.toggle('hidden', uploadHistory.length === 0);
   emptyHistoryEl.classList.toggle('hidden', uploadHistory.length > 0);
+  if (emptyHistoryText && uploadHistory.length === 0) {
+    emptyHistoryText.textContent = 'ยังไม่มีประวัติชื่อไฟล์บน Cloud';
+  }
   historyListEl.innerHTML = '';
 
   uploadHistory.forEach((rec) => {
@@ -730,29 +795,46 @@ function renderHistory() {
       <div class="file-main">
         <div class="file-thumb">${escapeHtml(ext)}</div>
         <div class="file-info">
-          <div class="file-name">${escapeHtml(rec.name)}</div>
+          <div class="file-name" title="${escapeHtml(rec.name)}">${escapeHtml(rec.name)}</div>
           <div class="file-sub">
-            <span>${formatBytes(rec.size)}</span>
-            <span>•</span>
-            <span>${escapeHtml(rec.time)}</span>
+            <span>☁️ บันทึกชื่อบน Cloud</span>
+            ${rec.time ? `<span>•</span><span>${escapeHtml(rec.time)}</span>` : ''}
           </div>
         </div>
       </div>
       <div class="file-right">
-        <a href="${rec.url}" target="_blank" rel="noopener" class="act-link">เปิดดู ↗</a>
+        <span class="badge-state success">✓ ส่งแล้ว</span>
       </div>
     `;
     historyListEl.appendChild(li);
   });
 }
 
-clearHistoryBtn.addEventListener('click', () => {
+if (refreshHistoryBtn) {
+  refreshHistoryBtn.addEventListener('click', () => {
+    playSound('pop');
+    fetchCloudHistory(false);
+  });
+}
+
+clearHistoryBtn.addEventListener('click', async () => {
   playSound('delete');
   uploadHistory = [];
   localStorage.removeItem('drivedrop_history');
   renderHistory();
-  showToast('ล้างประวัติการอัปโหลดเรียบร้อย');
+  showToast('กำลังล้างประวัติบน Cloud...');
+  try {
+    await fetch(CONFIG.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'clearHistory' })
+    });
+    showToast('☁️ ล้างประวัติชื่อไฟล์บน Cloud เรียบร้อย');
+  } catch (_) {}
 });
+
+// ซิงค์ประวัติชื่อไฟล์จาก Cloud อัตโนมัติเมื่อเปิดหน้าเว็บ
+fetchCloudHistory(true);
 
 // ============================================================================
 // Helpers
@@ -824,11 +906,11 @@ let floatingTexts = [];
 const hoop = {
   x: 455,
   y: 135,
-  rimRadius: 34,
-  leftRimX: 421,
-  rightRimX: 489,
-  backboardX: 500,
-  backboardTop: 65,
+  rimRadius: 39,
+  leftRimX: 416,
+  rightRimX: 494,
+  backboardX: 502,
+  backboardTop: 60,
   backboardBottom: 155
 };
 
@@ -891,8 +973,11 @@ if (bAddFileBtn) {
 
 if (bQuickShootBtn) {
   bQuickShootBtn.addEventListener('click', () => {
-    if (ball.inFlight) resetBall();
-    shootBallWithVelocity(8.75 + (Math.random() - 0.5) * 0.15, -9.91 + (Math.random() - 0.5) * 0.12);
+    resetBall();
+    const frames = 48;
+    const vx = (hoop.x - ball.x) / frames;
+    const vy = (hoop.y - ball.y - 0.38 * (frames * (frames - 1)) / 2) / frames;
+    shootBallWithVelocity(vx, vy);
   });
 }
 
@@ -955,11 +1040,11 @@ basketCanvas.addEventListener('pointerup', (e) => {
   const dy = pt.y - dragState.startY;
   const dragDist = Math.hypot(dx, dy);
 
-  // หากแตะเฉยๆ หรือแตะที่แป้น ให้คำนวณวิถีโค้งเข้ากลางห่วงอย่างแม่นยำ
+  // หากแตะเฉยๆ หรือแตะที่แป้น ให้คำนวณวิถีโค้งสูงเข้ากลางห่วงอย่างแม่นยำ
   if (dragDist < 14) {
     const targetX = pt.x > 220 ? pt.x : hoop.x;
     const targetY = pt.x > 220 ? Math.max(80, Math.min(pt.y, hoop.y + 10)) : hoop.y;
-    const frames = 40;
+    const frames = 48;
     const vx = (targetX - ball.x) / frames;
     const vy = (targetY - ball.y - 0.38 * (frames * (frames - 1)) / 2) / frames;
     shootBallWithVelocity(vx, vy);
@@ -1107,10 +1192,10 @@ function updateBasketballPhysics() {
         bStreak = 0;
         bStreakEl.textContent = '0';
       }
-      setTimeout(() => {
-        if (ball.inFlight) resetBall();
-      }, 420);
       ball.inFlight = false;
+      setTimeout(() => {
+        if (!ball.inFlight) resetBall();
+      }, 420);
     }
   }
 
