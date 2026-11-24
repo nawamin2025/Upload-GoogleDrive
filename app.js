@@ -798,3 +798,471 @@ function showToast(msg) {
     toastEl.classList.add('hidden');
   }, 3200);
 }
+// ============================================================================
+// 8. Basketball Shoot-to-Upload Mini-Game ("ชู้ตบาสเข้าห่วง = อัปโหลดไฟล์ทันที!")
+// ============================================================================
+const openBasketBtn = document.getElementById('openBasketBtn');
+const shootToUploadBtn = document.getElementById('shootToUploadBtn');
+const closeBasketBtn = document.getElementById('closeBasketBtn');
+const basketModal = document.getElementById('basketModal');
+const basketCanvas = document.getElementById('basketCanvas');
+const bCtx = basketCanvas.getContext('2d');
+
+const bScoreEl = document.getElementById('bScore');
+const bStreakEl = document.getElementById('bStreak');
+const bQueueCountEl = document.getElementById('bQueueCount');
+const bAddFileBtn = document.getElementById('bAddFileBtn');
+const bQuickShootBtn = document.getElementById('bQuickShootBtn');
+const basketStatusMsg = document.getElementById('basketStatusMsg');
+
+let bGameOpen = false;
+let bScore = 0;
+let bStreak = 0;
+let netStretch = 0;
+let floatingTexts = [];
+
+const hoop = {
+  x: 455,
+  y: 135,
+  rimRadius: 34,
+  leftRimX: 421,
+  rightRimX: 489,
+  backboardX: 500,
+  backboardTop: 65,
+  backboardBottom: 155
+};
+
+const ball = {
+  startX: 105,
+  startY: 235,
+  x: 105,
+  y: 235,
+  vx: 0,
+  vy: 0,
+  r: 20,
+  angle: 0,
+  vAngle: 0,
+  inFlight: false,
+  scoredThisShot: false,
+  prevY: 235
+};
+
+let dragState = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  currX: 0,
+  currY: 0
+};
+
+function updateBasketQueueCount() {
+  const pendingCount = fileQueue.filter((i) => i.status === 'pending' || i.status === 'error').length;
+  if (bQueueCountEl) bQueueCountEl.textContent = pendingCount;
+}
+
+function openBasketballGame() {
+  playSound('pop');
+  updateBasketQueueCount();
+  resetBall();
+  bGameOpen = true;
+  basketModal.classList.remove('hidden');
+}
+
+function closeBasketballGame() {
+  playSound('click');
+  bGameOpen = false;
+  basketModal.classList.add('hidden');
+}
+
+if (openBasketBtn) openBasketBtn.addEventListener('click', openBasketballGame);
+if (shootToUploadBtn) shootToUploadBtn.addEventListener('click', openBasketballGame);
+if (closeBasketBtn) closeBasketBtn.addEventListener('click', closeBasketballGame);
+
+basketModal.addEventListener('click', (e) => {
+  if (e.target === basketModal) closeBasketballGame();
+});
+
+if (bAddFileBtn) {
+  bAddFileBtn.addEventListener('click', () => {
+    playSound('click');
+    if (!isUploading) fileInput.click();
+  });
+}
+
+if (bQuickShootBtn) {
+  bQuickShootBtn.addEventListener('click', () => {
+    if (ball.inFlight) resetBall();
+    shootBallWithVelocity(8.75 + (Math.random() - 0.5) * 0.15, -9.91 + (Math.random() - 0.5) * 0.12);
+  });
+}
+
+function resetBall() {
+  ball.x = ball.startX;
+  ball.y = ball.startY;
+  ball.prevY = ball.startY;
+  ball.vx = 0;
+  ball.vy = 0;
+  ball.vAngle = 0;
+  ball.inFlight = false;
+  ball.scoredThisShot = false;
+  updateBasketQueueCount();
+}
+
+function shootBallWithVelocity(vx, vy) {
+  playSound('pop');
+  ball.vx = vx;
+  ball.vy = vy;
+  ball.vAngle = vx * 0.04;
+  ball.inFlight = true;
+  ball.scoredThisShot = false;
+}
+
+function getCanvasCoords(e) {
+  const rect = basketCanvas.getBoundingClientRect();
+  const scaleX = basketCanvas.width / rect.width;
+  const scaleY = basketCanvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY
+  };
+}
+
+basketCanvas.addEventListener('pointerdown', (e) => {
+  if (ball.inFlight) {
+    resetBall();
+  }
+  const pt = getCanvasCoords(e);
+  dragState.active = true;
+  dragState.startX = pt.x;
+  dragState.startY = pt.y;
+  dragState.currX = pt.x;
+  dragState.currY = pt.y;
+  basketCanvas.setPointerCapture(e.pointerId);
+});
+
+basketCanvas.addEventListener('pointermove', (e) => {
+  if (!dragState.active) return;
+  const pt = getCanvasCoords(e);
+  dragState.currX = pt.x;
+  dragState.currY = pt.y;
+});
+
+basketCanvas.addEventListener('pointerup', (e) => {
+  if (!dragState.active) return;
+  dragState.active = false;
+  const pt = getCanvasCoords(e);
+  const dx = pt.x - dragState.startX;
+  const dy = pt.y - dragState.startY;
+  const dragDist = Math.hypot(dx, dy);
+
+  // หากแตะเฉยๆ หรือแตะที่แป้น ให้คำนวณวิถีโค้งเข้ากลางห่วงอย่างแม่นยำ
+  if (dragDist < 14) {
+    const targetX = pt.x > 220 ? pt.x : hoop.x;
+    const targetY = pt.x > 220 ? Math.max(80, Math.min(pt.y, hoop.y + 10)) : hoop.y;
+    const frames = 40;
+    const vx = (targetX - ball.x) / frames;
+    const vy = (targetY - ball.y - 0.38 * (frames * (frames - 1)) / 2) / frames;
+    shootBallWithVelocity(vx, vy);
+    return;
+  }
+
+  // รองรับทั้งลากแบบง้างหนังสติ๊ก (ดึงถอยหลัง) และลากปัดไปข้างหน้า (Flick)
+  let vx, vy;
+  if (dx < 0) {
+    // ดึงแบบหนังสติ๊ก
+    vx = Math.min(14.5, Math.max(5.5, -dx * 0.11));
+    vy = Math.max(-16, Math.min(-7, -dy * 0.11 - 3));
+  } else {
+    // ปัดไปข้างหน้า
+    vx = Math.min(14.5, Math.max(5.5, dx * 0.085 + 4));
+    vy = Math.max(-16, Math.min(-7, dy * 0.085 - 8.5));
+  }
+  shootBallWithVelocity(vx, vy);
+});
+
+function computeLaunchVelocityFromDrag() {
+  const dx = dragState.currX - dragState.startX;
+  const dy = dragState.currY - dragState.startY;
+  if (Math.hypot(dx, dy) < 12) return { vx: 8.75, vy: -9.91 };
+  if (dx < 0) {
+    return {
+      vx: Math.min(14.5, Math.max(5.5, -dx * 0.11)),
+      vy: Math.max(-16, Math.min(-7, -dy * 0.11 - 3))
+    };
+  }
+  return {
+    vx: Math.min(14.5, Math.max(5.5, dx * 0.085 + 4)),
+    vy: Math.max(-16, Math.min(-7, dy * 0.085 - 8.5))
+  };
+}
+
+function onBasketScored() {
+  bScore++;
+  bStreak++;
+  netStretch = 16;
+  bScoreEl.textContent = bScore;
+  bStreakEl.textContent = bStreak;
+
+  playSound('success');
+  launchConfetti();
+
+  const pendingTargets = fileQueue.filter((item) => item.status === 'pending' || item.status === 'error');
+
+  if (pendingTargets.length > 0 && !isUploading) {
+    floatingTexts.push({
+      x: hoop.x - 20,
+      y: hoop.y - 25,
+      text: `🏀 SWISH! ส่ง ${pendingTargets.length} ไฟล์ขึ้น Drive! 🚀`,
+      life: 1.0,
+      color: '#34d399'
+    });
+    basketStatusMsg.textContent = `🔥 ชู้ตลงห่วงแล้ว! กำลังอัปโหลด ${pendingTargets.length} ไฟล์เข้า Google Drive ทันที!`;
+    uploadAllBtn.click();
+  } else if (isUploading) {
+    floatingTexts.push({
+      x: hoop.x - 10,
+      y: hoop.y - 25,
+      text: `🔥 SWISH! +1 (กำลังอัปโหลด...)`,
+      life: 1.0,
+      color: '#38bdf8'
+    });
+  } else {
+    floatingTexts.push({
+      x: hoop.x - 10,
+      y: hoop.y - 25,
+      text: `🏀 SWISH! +1 แต้ม!`,
+      life: 1.0,
+      color: '#fbbf24'
+    });
+    basketStatusMsg.textContent = `🎯 แม่นมาก! เลือกไฟล์ใส่คิวแล้วชู้ตแบบนี้เพื่ออัปโหลดเข้า Google Drive ได้เลย!`;
+  }
+}
+
+function updateBasketballPhysics() {
+  if (netStretch > 0) netStretch *= 0.88;
+
+  if (!ball.inFlight) return;
+
+  ball.prevY = ball.y;
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+  ball.vy += 0.38; // Gravity
+  ball.angle += ball.vAngle;
+
+  // ชนแป้นบาส (Backboard)
+  if (
+    ball.x + ball.r >= hoop.backboardX &&
+    ball.x - ball.r <= hoop.backboardX + 12 &&
+    ball.y >= hoop.backboardTop &&
+    ball.y <= hoop.backboardBottom &&
+    ball.vx > 0
+  ) {
+    ball.x = hoop.backboardX - ball.r;
+    ball.vx = -ball.vx * 0.62;
+    playSound('click');
+  }
+
+  // ชนขอบห่วงซ้ายและขวา
+  [
+    { rx: hoop.leftRimX, ry: hoop.y },
+    { rx: hoop.rightRimX, ry: hoop.y }
+  ].forEach((rim) => {
+    const dx = ball.x - rim.rx;
+    const dy = ball.y - rim.ry;
+    const dist = Math.hypot(dx, dy);
+    const minDist = ball.r + 4;
+    if (dist < minDist && dist > 0) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      ball.x = rim.rx + nx * minDist;
+      ball.y = rim.ry + ny * minDist;
+      const dot = ball.vx * nx + ball.vy * ny;
+      ball.vx = (ball.vx - 2 * dot * nx) * 0.68;
+      ball.vy = (ball.vy - 2 * dot * ny) * 0.68;
+      playSound('click');
+    }
+  });
+
+  // ตรวจจับลูกบาสลอดห่วงลงมา (Swish!)
+  if (
+    !ball.scoredThisShot &&
+    ball.vy > 0 &&
+    ball.prevY <= hoop.y &&
+    ball.y >= hoop.y &&
+    ball.x > hoop.leftRimX + 8 &&
+    ball.x < hoop.rightRimX - 8
+  ) {
+    ball.scoredThisShot = true;
+    onBasketScored();
+  }
+
+  // ตกพื้นสนาม
+  const floorY = 305;
+  if (ball.y + ball.r > floorY) {
+    ball.y = floorY - ball.r;
+    ball.vy = -ball.vy * 0.55;
+    ball.vx *= 0.78;
+    if (Math.abs(ball.vy) < 1.5 || ball.x > basketCanvas.width + 40 || ball.x < -40) {
+      if (!ball.scoredThisShot) {
+        bStreak = 0;
+        bStreakEl.textContent = '0';
+      }
+      setTimeout(() => {
+        if (ball.inFlight) resetBall();
+      }, 420);
+      ball.inFlight = false;
+    }
+  }
+
+  if (ball.x > basketCanvas.width + 60 || ball.x < -60) {
+    if (!ball.scoredThisShot) {
+      bStreak = 0;
+      bStreakEl.textContent = '0';
+    }
+    resetBall();
+  }
+}
+
+function drawBasketballCourt() {
+  if (!bGameOpen) {
+    requestAnimationFrame(drawBasketballCourt);
+    return;
+  }
+
+  updateBasketballPhysics();
+  bCtx.clearRect(0, 0, basketCanvas.width, basketCanvas.height);
+
+  // พื้นสนาม
+  bCtx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
+  bCtx.lineWidth = 2;
+  bCtx.beginPath();
+  bCtx.moveTo(0, 305);
+  bCtx.lineTo(basketCanvas.width, 305);
+  bCtx.stroke();
+
+  // เส้นโค้งเล็งเป้าหมายขณะกำลังลาก
+  if (dragState.active && !ball.inFlight) {
+    const { vx, vy } = computeLaunchVelocityFromDrag();
+    bCtx.save();
+    for (let t = 2; t <= 36; t += 2.5) {
+      const px = ball.x + vx * t;
+      const py = ball.y + vy * t + 0.5 * 0.38 * t * t;
+      if (py > 305) break;
+      bCtx.beginPath();
+      bCtx.arc(px, py, 3.2, 0, Math.PI * 2);
+      bCtx.fillStyle = `rgba(56, 189, 248, ${Math.max(0.15, 0.85 - t * 0.02)})`;
+      bCtx.fill();
+    }
+    bCtx.restore();
+  }
+
+  // เสาและแป้นบาส Google Drive Cloud
+  bCtx.strokeStyle = '#64748b';
+  bCtx.lineWidth = 6;
+  bCtx.beginPath();
+  bCtx.moveTo(525, 110);
+  bCtx.lineTo(525, 305);
+  bCtx.moveTo(500, 110);
+  bCtx.lineTo(525, 110);
+  bCtx.stroke();
+
+  // แป้นบาส
+  bCtx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  bCtx.strokeStyle = '#38bdf8';
+  bCtx.lineWidth = 4;
+  bCtx.beginPath();
+  bCtx.roundRect(hoop.backboardX, hoop.backboardTop, 8, hoop.backboardBottom - hoop.backboardTop, 4);
+  bCtx.fill();
+  bCtx.stroke();
+
+  // ป้าย "GOOGLE DRIVE HOOP" บนแป้น
+  bCtx.fillStyle = 'rgba(56, 189, 248, 0.9)';
+  bCtx.font = '600 11px Prompt, sans-serif';
+  bCtx.textAlign = 'center';
+  bCtx.fillText('☁️ DRIVE HOOP', hoop.x, hoop.backboardTop - 10);
+
+  // ตาข่ายบาส (ยืดหดได้เมื่อชู้ตลง)
+  const netBottomY = hoop.y + 38 + netStretch;
+  bCtx.strokeStyle = 'rgba(241, 245, 249, 0.72)';
+  bCtx.lineWidth = 1.6;
+  for (let i = 0; i <= 5; i++) {
+    const topX = hoop.leftRimX + (i / 5) * (hoop.rightRimX - hoop.leftRimX);
+    const botX = hoop.leftRimX + 10 + (i / 5) * (hoop.rightRimX - hoop.leftRimX - 20);
+    bCtx.beginPath();
+    bCtx.moveTo(topX, hoop.y);
+    bCtx.lineTo(botX, netBottomY);
+    bCtx.stroke();
+  }
+  bCtx.beginPath();
+  bCtx.moveTo(hoop.leftRimX + 6, hoop.y + 18 + netStretch * 0.4);
+  bCtx.lineTo(hoop.rightRimX - 6, hoop.y + 18 + netStretch * 0.4);
+  bCtx.moveTo(hoop.leftRimX + 10, netBottomY);
+  bCtx.lineTo(hoop.rightRimX - 10, netBottomY);
+  bCtx.stroke();
+
+  // ห่วงบาสสีส้ม
+  bCtx.strokeStyle = '#f97316';
+  bCtx.lineWidth = 5;
+  bCtx.beginPath();
+  bCtx.moveTo(hoop.leftRimX, hoop.y);
+  bCtx.lineTo(hoop.rightRimX, hoop.y);
+  bCtx.stroke();
+
+  // วาดลูกบาสเกตบอล
+  bCtx.save();
+  bCtx.translate(ball.x, ball.y);
+  bCtx.rotate(ball.angle);
+
+  const grad = bCtx.createRadialGradient(-6, -6, 3, 0, 0, ball.r);
+  grad.addColorStop(0, '#fb923c');
+  grad.addColorStop(1, '#ea580c');
+  bCtx.beginPath();
+  bCtx.arc(0, 0, ball.r, 0, Math.PI * 2);
+  bCtx.fillStyle = grad;
+  bCtx.fill();
+  bCtx.lineWidth = 2;
+  bCtx.strokeStyle = '#7c2d12';
+  bCtx.stroke();
+
+  // ลายเส้นลูกบาส
+  bCtx.beginPath();
+  bCtx.moveTo(-ball.r, 0);
+  bCtx.lineTo(ball.r, 0);
+  bCtx.moveTo(0, -ball.r);
+  bCtx.lineTo(0, ball.r);
+  bCtx.stroke();
+  bCtx.restore();
+
+  // ป้ายบอกจำนวนไฟล์บนลูกบาส
+  const pendingCount = fileQueue.filter((i) => i.status === 'pending' || i.status === 'error').length;
+  if (pendingCount > 0 && !ball.inFlight) {
+    bCtx.fillStyle = '#38bdf8';
+    bCtx.font = '600 12px Prompt, sans-serif';
+    bCtx.textAlign = 'center';
+    bCtx.fillText(`📦 ${pendingCount} ไฟล์พร้อมชู้ต!`, ball.x, ball.y - 30);
+  }
+
+  // ข้อความลอยเวลามีแต้ม
+  floatingTexts = floatingTexts.filter((ft) => ft.life > 0.02);
+  for (const ft of floatingTexts) {
+    ft.y -= 0.9;
+    ft.life -= 0.016;
+    bCtx.save();
+    bCtx.globalAlpha = Math.max(0, ft.life);
+    bCtx.fillStyle = ft.color;
+    bCtx.font = '700 15px Prompt, sans-serif';
+    bCtx.textAlign = 'center';
+    bCtx.fillText(ft.text, ft.x, ft.y);
+    bCtx.restore();
+  }
+
+  requestAnimationFrame(drawBasketballCourt);
+}
+drawBasketballCourt();
+
+// ซิงค์ตัวเลขจำนวนไฟล์ในเกมทุกครั้งที่คิวอัปเดต
+const _origRenderQueue = renderQueue;
+renderQueue = function () {
+  _origRenderQueue();
+  updateBasketQueueCount();
+};
