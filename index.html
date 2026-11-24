@@ -216,15 +216,18 @@
       <div class="glass-card history-card">
         <div class="history-header">
           <div>
-            <h3>ประวัติไฟล์ที่อัปโหลดสำเร็จ</h3>
-            <p>บันทึกไว้ในเครื่องนี้ เพื่อเปิดดูหรือแชร์ลิงก์ย้อนหลัง</p>
+            <h3>☁️ ประวัติชื่อไฟล์บน Cloud (ไม่สูญหาย)</h3>
+            <p>ซิงค์ชื่อไฟล์อัตโนมัติบนคลาวด์ • เก็บเฉพาะชื่อไฟล์เท่านั้นเพื่อความปลอดภัย</p>
           </div>
-          <button id="clearHistoryBtn" class="mini-btn danger-hover">ล้างประวัติ</button>
+          <div class="queue-top-actions">
+            <button id="refreshHistoryBtn" class="mini-btn">🔄 ซิงค์ Cloud</button>
+            <button id="clearHistoryBtn" class="mini-btn danger-hover">ล้างประวัติ</button>
+          </div>
         </div>
         <ul id="historyList" class="file-list"></ul>
         <div id="emptyHistory" class="empty-state">
           <div class="empty-emoji">☁️</div>
-          <p>ยังไม่มีประวัติการอัปโหลดในเครื่องนี้</p>
+          <p id="emptyHistoryText">กำลังซิงค์รายชื่อไฟล์จาก Cloud...</p>
         </div>
       </div>
     </section>
@@ -267,6 +270,6 @@
   <!-- Toast Popup -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
