@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <!-- Interactive Particle & Confetti Canvas -->
@@ -45,6 +45,12 @@
       </div>
 
       <div class="top-controls">
+        <!-- Mini Basketball Shoot-to-Upload Game Button -->
+        <button id="openBasketBtn" class="control-pill basket-pill" title="เล่นเกมชู้ตบาสเข้าห่วงเพื่ออัปโหลดไฟล์">
+          <span class="bball-spin">🏀</span>
+          <span>เกมชู้ตบาส</span>
+        </button>
+
         <!-- Theme Switcher Button -->
         <button id="themeBtn" class="control-pill" title="สลับโทนสีสบายตา">
           <span id="themeIcon">🌌</span>
@@ -176,6 +182,10 @@
             <span class="launch-rocket">🚀</span>
             <span id="uploadBtnText">เริ่มอัปโหลดทั้งหมด</span>
           </button>
+          <button id="shootToUploadBtn" class="btn-shoot-mode" title="ชู้ตบาสให้ลงห่วงเพื่อเริ่มอัปโหลดทันที!">
+            <span>🏀</span>
+            <span>ชู้ตเข้าอัปโหลด</span>
+          </button>
         </div>
       </section>
 
@@ -220,9 +230,43 @@
     </section>
   </div>
 
+  <!-- Basketball Shoot-to-Upload Mini-Game Modal -->
+  <div id="basketModal" class="basket-modal hidden">
+    <div class="basket-dialog glass-card">
+      <div class="basket-top">
+        <div class="basket-title">
+          <span class="bball-spin">🏀</span>
+          <div>
+            <h3>ชู้ตบาสเข้าห่วง = อัปโหลดไฟล์!</h3>
+            <p id="basketSubHint">ลากลูกบาสเล็งวิถีโค้ง หรือแตะที่แป้นเพื่อชู้ตเข้า Google Drive</p>
+          </div>
+        </div>
+        <button id="closeBasketBtn" class="btn-del" title="ปิดหน้าต่างเกม">✕</button>
+      </div>
+
+      <div class="basket-scoreboard">
+        <div class="score-pill">🏆 แต้ม: <strong id="bScore">0</strong></div>
+        <div class="score-pill">🔥 ต่อเนื่อง: <strong id="bStreak">0</strong></div>
+        <div class="score-pill queue-pill-game">
+          📦 รอชู้ตอัปโหลด: <strong id="bQueueCount">0</strong> ไฟล์
+        </div>
+        <button id="bAddFileBtn" class="mini-btn q-add-game">+ เลือกไฟล์มาชู้ต</button>
+      </div>
+
+      <div class="court-wrap">
+        <canvas id="basketCanvas" width="560" height="340"></canvas>
+      </div>
+
+      <div class="basket-footer">
+        <span id="basketStatusMsg" class="basket-status-msg">💡 ชู้ตให้ลงห่วงเพื่อส่งไฟล์ในคิวขึ้น Google Drive อัตโนมัติ!</span>
+        <button id="bQuickShootBtn" class="mini-btn">⚡ ชู้ตอัตโนมัติ</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Popup -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
