@@ -251,6 +251,8 @@ const queueBadge = document.getElementById('queueBadge');
 const historyBadge = document.getElementById('historyBadge');
 const historyListEl = document.getElementById('historyList');
 const emptyHistoryEl = document.getElementById('emptyHistory');
+const emptyHistoryText = document.getElementById('emptyHistoryText');
+const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 const toastEl = document.getElementById('toast');
 
@@ -707,8 +709,6 @@ function updateOverallProgress(doneFiles, totalFiles, currentFilePct = 0) {
 // ============================================================================
 // 7. Upload History Tab (Cloud Sync — เก็บเฉพาะชื่อไฟล์บน Cloud ไม่สูญหาย)
 // ============================================================================
-const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
-const emptyHistoryText = document.getElementById('emptyHistoryText');
 
 async function fetchCloudHistory(silent = false) {
   if (!silent && emptyHistoryText) {
